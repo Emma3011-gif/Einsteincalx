@@ -1,370 +1,676 @@
 import tkinter as tk
-from tkinter import font
+from tkinter import font as tkfont
 import math
+import re
 from functools import partial
+
+# ── Button layout ─────────────────────────────────────────────────────────────
+BUTTON_ROWS = [
+    [("⏮","nav"),  ("◀","nav"),  ("▲","nav"),  ("▼","nav"),  ("▶","nav"),  ("⏭","nav")],
+    [("hyp","fn"), ("And","fn"), ("Or","fn"),  ("int","fn"), ("Mode","fn"),("π","fn")],
+    [("√x","fn"),  ("log","fn"), ("eng","fn"), ("e^x","fn"), ("ln","fn"),  ("sin","fn")],
+    [("Rcl","op"), ("x²","op"),  ("x^","op"),  ("cos","fn"), ("tan","fn"), ("n!","op")],
+    [("(-)","op"), ("sin⁻¹","fn"),("10^x","fn"),("MC","op"), ("abs","op"), ("MR","op")],
+    [("MS","op"),  ("(","op"),   ("M+","op"),  ("M-","op"),  ("00","op"),  ("ANS","op")],
+    [("7","num"),  ("8","num"),  ("9","num"),  ("DEL","del"),("AC","ac"),  ("%","op")],
+    [("4","num"),  ("5","num"),  ("6","num"),  ("×","op"),   ("÷","op"),   ("+","op")],
+    [("1","num"),  ("2","num"),  ("3","num"),  ("-","op"),   ("^","op"),   ("=","eq")],
+    [("0","num"),  (".","num"),  (")","op"),   ("√","fn"),   ("^2","fn"),  ("MS2","op")],
+]
+
+COLORS = {
+    "bg":           "#1c1c1e",
+    "display_bg":   "#161618",
+    "display_text": "#ffffff",
+    "display_expr": "#888888",
+    "fn":           "#2c2c2e",
+    "op":           "#3a3a3c",
+    "num":          "#48484a",
+    "del":          "#e53935",
+    "ac":           "#4caf50",
+    "eq":           "#4caf50",
+    "nav":          "#242426",
+    "sep":          "#3a3a3c",
+}
+
+NUM_ROWS = len(BUTTON_ROWS)
+NUM_COLS = 6
+
 
 class ScientificCalculator:
     def __init__(self, root):
         self.root = root
-        self.root.title("Scientific Calculator")
-        self.root.geometry("420x650")
-        self.root.resizable(False, False)
-        self.root.configure(bg="#1E1E2E")
+        self.root.title("CalcureX fx-120")
+        self.root.configure(bg=COLORS["bg"])
 
-        # Colors - Updated dark theme
-        self.colors = {
-            "bg": "#1a1a1a",
-            "display_bg": "#1a1a1a",
-            "display_text": "#FFFFFF",
-            "display_expr": "#aaaaaa",
-            "function": "#2a2a2a",      # Dark function buttons (scientific)
-            "operator": "#3d3d3d",      # Medium gray (operators, parentheses, memory)
-            "number": "#4a4a4a",        # Numeric buttons (lighter)
-            "del": "#e53935",            # DEL - vivid red
-            "ac": "#43a047",            # AC - vivid green
-            "nav": "#2a2a2a",           # Navigation buttons
-        }
+        sw = root.winfo_screenwidth()
+        sh = root.winfo_screenheight()
+        win_w = max(360, int(sw * 0.40))
+        win_h = max(640, int(sh * 0.92))
+        x = (sw - win_w) // 2
+        y = (sh - win_h) // 2
+        self.root.geometry(f"{win_w}x{win_h}+{x}+{y}")
+        self.root.minsize(320, 580)
+        self.root.resizable(True, True)
 
-        # State variables
-        self.expression = ""
-        self.current_input = ""
-        self.memory = 0
-        self.last_result = 0
-        self.angle_mode = "degrees"
+        # ── State ─────────────────────────────────────────────────────────
+        self.expression       = ""
+        self.current_input    = ""
+        self.memory           = 0.0
+        self.last_result      = 0
+        self.open_parens      = 0
+        self._cursor_vis      = True
+        self._just_calculated = False
 
-        # Setup UI
-        self.create_display()
-        self.create_buttons()
+        # ── Fonts ─────────────────────────────────────────────────────────
+        self._font_display = tkfont.Font(family="Helvetica Neue", size=42, weight="bold")
+        self._font_expr    = tkfont.Font(family="Helvetica Neue", size=11)
+        self._font_cursor  = tkfont.Font(family="Helvetica Neue", size=11)
+        self._font_fn      = tkfont.Font(family="Helvetica Neue", size=9)
+        self._font_num     = tkfont.Font(family="Helvetica Neue", size=13, weight="bold")
+        self._font_nav     = tkfont.Font(family="Helvetica Neue", size=9)
+        self._font_hdr     = tkfont.Font(family="Helvetica Neue", size=10)
 
-    def create_display(self):
-        # Container frame for display area
-        display_frame = tk.Frame(self.root, bg=self.colors["display_bg"])
-        display_frame.grid(row=0, column=0, columnspan=6, sticky="ew", padx=12, pady=(20, 10))
-        display_frame.grid_rowconfigure(0, weight=1)
-        display_frame.grid_rowconfigure(1, weight=1)
+        self._build_ui()
+        self._blink_cursor()
+        self.root.bind("<Configure>", self._on_resize)
+        self.root.after(80, lambda: self._on_resize(None))
 
-        # Expression display (smaller, gray, above main)
+    # ─────────────────────────────────────────────────────────────────────────
+    # UI
+    # ─────────────────────────────────────────────────────────────────────────
+    def _build_ui(self):
+        self.outer = tk.Frame(self.root, bg=COLORS["bg"])
+        self.outer.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Header
+        hdr = tk.Frame(self.outer, bg=COLORS["bg"])
+        hdr.pack(side="top", fill="x", padx=14, pady=(10, 0))
+        tk.Label(hdr, text="≡", font=self._font_hdr,
+                 bg=COLORS["bg"], fg="#555555").pack(side="left")
+        tk.Label(hdr, text="Standard", font=self._font_hdr,
+                 bg=COLORS["bg"], fg="#666666").pack(side="right")
+
+        # Display panel
+        self.disp_frame = tk.Frame(self.outer, bg=COLORS["display_bg"])
+        self.disp_frame.pack(side="top", fill="x", padx=0, pady=(6, 0))
+
+        # Expression line
+        expr_row = tk.Frame(self.disp_frame, bg=COLORS["display_bg"])
+        expr_row.pack(side="top", fill="x", padx=14, pady=(10, 0))
         self.expr_label = tk.Label(
-            display_frame,
-            text="",
-            font=("Segoe UI", 13, "normal"),
-            bg=self.colors["display_bg"],
-            fg=self.colors["display_expr"],
-            anchor="e",
-            padx=10,
-            pady=(10, 5)
-        )
-        self.expr_label.grid(row=0, column=0, sticky="ew")
-
-        # Cursor label (blinking)
+            expr_row, text="",
+            font=self._font_expr,
+            bg=COLORS["display_bg"], fg=COLORS["display_expr"],
+            anchor="e", justify="right")
+        self.expr_label.pack(side="left", fill="x", expand=True)
         self.cursor_label = tk.Label(
-            display_frame,
-            text="|",
-            font=("Segoe UI", 13, "normal"),
-            bg=self.colors["display_bg"],
-            fg=self.colors["display_expr"],
-            pady=(10, 5)
-        )
-        self.cursor_label.grid(row=0, column=1, sticky="w")
-        self.blink_cursor()
+            expr_row, text="|",
+            font=self._font_cursor,
+            bg=COLORS["display_bg"], fg="#555555", width=1)
+        self.cursor_label.pack(side="left")
 
-        # Main display (large result)
+        # Main number
         self.display = tk.Label(
-            display_frame,
-            text="0",
-            font=("Segoe UI", 52, "bold"),
-            bg=self.colors["display_bg"],
-            fg=self.colors["display_text"],
-            anchor="e",
-            padx=10,
-            pady=(5, 15)
-        )
-        self.display.grid(row=1, column=0, columnspan=2, sticky="ew")
+            self.disp_frame, text="0",
+            font=self._font_display,
+            bg=COLORS["display_bg"], fg=COLORS["display_text"],
+            anchor="e", justify="right")
+        self.display.pack(side="top", fill="x", padx=14, pady=(2, 8))
 
-    def blink_cursor(self):
-        """Blink the cursor"""
-        current = self.cursor_label.cget("text")
-        self.cursor_label.config(text="" if current == "|" else "|")
-        self.root.after(500, self.blink_cursor)
+        # Memory row
+        mem_row = tk.Frame(self.disp_frame, bg=COLORS["display_bg"])
+        mem_row.pack(side="top", fill="x", padx=14, pady=(0, 6))
+        self.mem_lbl = tk.Label(
+            mem_row, text="",
+            font=self._font_hdr,
+            bg=COLORS["display_bg"], fg="#4caf50", anchor="w")
+        self.mem_lbl.pack(side="left")
 
-    def create_buttons(self):
-        # Button layout with new design - includes navigation row
-        buttons = [
-            # Row 1 - Navigation (cursor buttons)
-            ("◀", 1, 0, "nav"), ("▲", 1, 1, "nav"), ("▼", 1, 2, "nav"),
-            ("▶", 1, 3, "nav"), ("⏮", 1, 4, "nav"), ("⏭", 1, 5, "nav"),
+        # Separator
+        tk.Frame(self.outer, bg=COLORS["sep"], height=1).pack(
+            side="top", fill="x")
 
-            # Row 2 - Scientific functions (dark function buttons)
-            ("sin", 2, 0, "function"), ("cos", 2, 1, "function"),
-            ("tan", 2, 2, "function"), ("log", 2, 3, "function"),
-            ("ln", 2, 4, "function"), ("π", 2, 5, "function"),
+        # Button grid
+        self.grid_frame = tk.Frame(self.outer, bg=COLORS["bg"])
+        self.grid_frame.pack(side="top", fill="both", expand=True,
+                             padx=3, pady=3)
+        for c in range(NUM_COLS):
+            self.grid_frame.grid_columnconfigure(c, weight=1, uniform="col")
+        for r in range(NUM_ROWS):
+            self.grid_frame.grid_rowconfigure(r, weight=1, uniform="row")
 
-            # Row 3 - More scientific
-            ("hyp", 3, 0, "function"), ("int", 3, 1, "function"),
-            ("Mode", 3, 2, "function"), ("eng", 3, 3, "function"),
-            ("(", 3, 4, "operator"), (")", 3, 5, "operator"),
+        self._btn_widgets = []
+        for r, row_def in enumerate(BUTTON_ROWS):
+            for c, (label, ctype) in enumerate(row_def):
+                display_label = "MS" if label == "MS2" else label
+                bg  = COLORS.get(ctype, COLORS["fn"])
+                btn = tk.Button(
+                    self.grid_frame,
+                    text=display_label,
+                    font=self._font_for(ctype),
+                    bg=bg,
+                    fg=self._fg_for(ctype),
+                    activebackground=self._lighten(bg, 0.25),
+                    activeforeground="#ffffff",
+                    relief="flat", bd=0,
+                    cursor="hand2",
+                    command=partial(self.on_button_click, label))
+                btn.grid(row=r, column=c, sticky="nsew", padx=2, pady=2)
+                btn.bind("<Enter>",
+                    lambda e, b=btn, col=bg: b.config(
+                        bg=self._lighten(col, 0.25)))
+                btn.bind("<Leave>",
+                    lambda e, b=btn, col=bg: b.config(bg=col))
+                self._btn_widgets.append((btn, ctype, bg))
 
-            # Row 4 - Memory and operators
-            ("MC", 4, 0, "operator"), ("MR", 4, 1, "operator"),
-            ("M+", 4, 2, "operator"), ("M-", 4, 3, "operator"),
-            ("%", 4, 4, "operator"), ("AC", 4, 5, "ac"),
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _font_for(self, ctype):
+        if ctype == "nav":                       return self._font_nav
+        if ctype in ("num", "eq", "del", "ac"): return self._font_num
+        return self._font_fn
 
-            # Row 5
-            ("7", 5, 0, "number"), ("8", 5, 1, "number"), ("9", 5, 2, "number"),
-            ("DEL", 5, 3, "del"), ("abs", 5, 4, "operator"), ("n!", 5, 5, "operator"),
+    def _fg_for(self, ctype):
+        return {"nav": "#aaaaaa"}.get(ctype, "#ffffff")
 
-            # Row 6
-            ("4", 6, 0, "number"), ("5", 6, 1, "number"), ("6", 6, 2, "number"),
-            ("×", 6, 3, "number"), ("÷", 6, 4, "number"), ("+", 6, 5, "number"),
+    def _lighten(self, hex_color, pct):
+        h   = hex_color.lstrip('#')
+        rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+        new = tuple(min(255, int(c + (255 - c) * pct)) for c in rgb)
+        return '#{:02x}{:02x}{:02x}'.format(*new)
 
-            # Row 7
-            ("1", 7, 0, "number"), ("2", 7, 1, "number"), ("3", 7, 2, "number"),
-            ("-", 7, 3, "number"), ("^", 7, 4, "number"), ("=", 7, 5, "number"),
+    # ── Resize ────────────────────────────────────────────────────────────────
+    def _on_resize(self, _):
+        self.root.update_idletasks()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        if w < 50 or h < 50:
+            return
+        disp_size = max(18, min(52, int(w * 0.10)))
+        self._font_display.config(size=disp_size)
+        expr_size = max(7, min(14, int(w * 0.028)))
+        self._font_expr.config(size=expr_size)
+        self._font_cursor.config(size=expr_size)
+        hdr_size = max(7, min(13, int(w * 0.024)))
+        self._font_hdr.config(size=hdr_size)
+        disp_block = disp_size * 2 + 60
+        btn_area_h = max(80, h - disp_block - 20)
+        row_h      = btn_area_h / NUM_ROWS
+        col_w      = w / NUM_COLS
+        ref        = min(row_h, col_w)
+        self._font_fn.config( size=max(6, min(13, int(ref * 0.30))))
+        self._font_num.config(size=max(8, min(20, int(ref * 0.40))), weight="bold")
+        self._font_nav.config(size=max(6, min(11, int(ref * 0.26))))
 
-            # Row 8
-            ("00", 8, 0, "operator"), ("0", 8, 1, "number"), (".", 8, 2, "number"),
-            ("ANS", 8, 3, "operator"), ("√", 8, 4, "function"), ("^2", 8, 5, "function"),
-        ]
+    def _blink_cursor(self):
+        self._cursor_vis = not self._cursor_vis
+        self.cursor_label.config(text="|" if self._cursor_vis else " ")
+        self.root.after(530, self._blink_cursor)
 
-        for btn_text, row, col, color_type in buttons:
-            self.create_button(btn_text, row, col, color_type)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Button handler
+    # ─────────────────────────────────────────────────────────────────────────
+    def on_button_click(self, label):
+        is_digit = (label in [str(i) for i in range(10)] + [".", "00"])
+        if self._just_calculated and is_digit:
+            self.expression    = ""
+            self.current_input = ""
+            self.open_parens   = 0
+        self._just_calculated = False
 
-    def create_button(self, text, row, col, color_type, span=1):
-        bg_color = self.colors.get(color_type, self.colors["number"])
+        if   label == "AC":           self._clear_all()
+        elif label == "DEL":          self._delete_last()
+        elif label == "=":            self._calculate()
+        elif label == "×":            self._push_op("×")
+        elif label == "÷":            self._push_op("÷")
+        elif label == "+":            self._push_op("+")
+        elif label == "-":            self._push_op("-")
+        elif label == "^":            self._push_op("^")
+        elif label == "%":            self._push_op("%")
+        elif label == "(-)":          self._negate()
+        elif label in ("x²", "^2"):   self._push_postfix_op("^2")
+        elif label == "x^":           self._push_op("^")
+        elif label in ("√", "√x"):    self._push_func("√(")
+        elif label == "sin":          self._push_func("sin(")
+        elif label == "cos":          self._push_func("cos(")
+        elif label == "tan":          self._push_func("tan(")
+        elif label == "sin⁻¹":        self._push_func("asin(")
+        elif label == "asin":         self._push_func("asin(")
+        elif label == "acos":         self._push_func("acos(")
+        elif label == "atan":         self._push_func("atan(")
+        elif label == "hyp":          self._push_func("sinh(")
+        elif label == "sinh":         self._push_func("sinh(")
+        elif label == "cosh":         self._push_func("cosh(")
+        elif label == "tanh":         self._push_func("tanh(")
+        elif label == "log":          self._push_func("log(")
+        elif label == "ln":           self._push_func("ln(")
+        elif label == "abs":          self._push_func("abs(")
+        elif label == "eng":          self._push_func("eng(")
+        elif label == "e^x":          self._push_func("e^(")
+        elif label == "10^x":         self._push_func("10^(")
+        elif label in ("n!", "!"):    self._push_postfix("!")
+        elif label == "(":            self._push_open_paren()
+        elif label == ")":            self._push_close_paren()
+        elif label == "π":            self._push_constant("π")
+        elif label == "MC":           self._mem_clear()
+        elif label == "MR":           self._mem_recall()
+        elif label == "M+":           self._mem_add()
+        elif label == "M-":           self._mem_sub()
+        elif label in ("MS", "MS2"):  self._mem_store()
+        elif label == "ANS":          self._push_constant(self._fmt(self.last_result))
+        elif label == "00":           self._push_digit("00")
+        elif label == ".":            self._push_dot()
+        elif label in [str(i) for i in range(10)]:
+            self._push_digit(label)
 
-        btn = tk.Button(
-            self.root,
-            text=text,
-            font=("Arial", 14, "bold"),
-            bg=bg_color,
-            fg="white",
-            activebackground=self.lighten_color(bg_color, 0.15),
-            activeforeground="white",
-            relief="flat",
-            bd=0,
-            pady=8,
-            command=partial(self.on_button_click, text)
-        )
+        self._update_display()
 
-        btn.grid(row=row, column=col, columnspan=span, sticky="nsew", padx=3, pady=3)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Input primitives
+    # ─────────────────────────────────────────────────────────────────────────
+    def _needs_implicit_multiply(self):
+        """
+        Returns True when the expression ends with something that would need
+        a '*' before an opening parenthesis or constant.
+        e.g.  '5'  '3.14'  ')'  'π'
+        """
+        if not self.expression:
+            return False
+        last = self.expression[-1]
+        return last in "0123456789.)π"
 
-        # Bind hover events
-        btn.bind("<Enter>", lambda e: btn.configure(bg=self.lighten_color(bg_color, 0.15)))
-        btn.bind("<Leave>", lambda e: btn.configure(bg=bg_color))
-
-    def lighten_color(self, hex_color, percent):
-        hex_color = hex_color.lstrip('#')
-        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        new_rgb = tuple(min(255, int(c + (255 - c) * percent)) for c in rgb)
-        return '#{:02x}{:02x}{:02x}'.format(*new_rgb)
-
-    def on_button_click(self, text):
-        if text == "AC":
-            self.clear_all()
-        elif text == "DEL":
-            self.delete_last()
-        elif text == "=":
-            self.calculate()
-        elif text == "×":
-            self.add_operator("*")
-        elif text == "÷":
-            self.add_operator("/")
-        elif text == "√":
-            self.add_function("sqrt(")
-        elif text == "^":
-            self.add_operator("**")
-        elif text == "x²":
-            self.add_operator("**2")
-        elif text == "%":
-            self.add_operator("/100*")
-        elif text == "sin":
-            self.add_function("sin(")
-        elif text == "cos":
-            self.add_function("cos(")
-        elif text == "tan":
-            self.add_function("tan(")
-        elif text == "asin":
-            self.add_function("asin(")
-        elif text == "acos":
-            self.add_function("acos(")
-        elif text == "atan":
-            self.add_function("atan(")
-        elif text == "sinh":
-            self.add_function("sinh(")
-        elif text == "cosh":
-            self.add_function("cosh(")
-        elif text == "tanh":
-            self.add_function("tanh(")
-        elif text == "log":
-            self.add_function("log10(")
-        elif text == "ln":
-            self.add_function("log(")
-        elif text == "!":
-            self.add_operator("!")
-        elif text == "π":
-            self.add_number(str(math.pi))
-        elif text == "e":
-            self.add_number(str(math.e))
-        elif text == "ANS":
-            self.add_number(str(self.last_result))
-        elif text == "MC":
-            self.memory = 0
-        elif text == "MR":
-            self.add_number(str(self.memory))
-        elif text == "M+":
-            try:
-                current = float(self.current_input) if self.current_input else self.last_result
-                self.memory += current
-            except:
-                pass
+    def _push_digit(self, d):
+        if self.current_input in ("", "0") and d not in (".", "00"):
+            # Replace a lone zero that follows an operator or is the start
+            if (self.expression
+                    and self.expression[-1] == "0"
+                    and (len(self.expression) == 1
+                         or self.expression[-2] in "+-×÷^(!")):
+                self.expression    = self.expression[:-1] + d
+            else:
+                self.expression   += d
+            self.current_input = d
         else:
-            self.add_number(text)
+            if d == "00" and not self.current_input:
+                d = "0"
+            self.expression   += d
+            self.current_input += d
 
-        self.update_display()
-
-    def add_number(self, num):
-        if self.current_input == "0" and num != ".":
-            self.current_input = num
+    def _push_dot(self):
+        if "." in self.current_input:
+            return
+        if not self.current_input:
+            self.expression   += "0."
+            self.current_input = "0."
         else:
-            self.current_input += num
-        self.expression += num
+            self.expression   += "."
+            self.current_input += "."
 
-    def add_operator(self, op):
-        if op == "!":
-            if self.current_input:
-                self.expression += "!"
+    def _push_op(self, op):
+        """Infix binary operator."""
+        if not self.expression:
+            if op == "-":                   # allow leading minus
+                self.expression    = "-"
                 self.current_input = ""
-        else:
-            self.expression += op
+            return
+        last = self.expression[-1]
+        if last in "×÷+-^%":               # replace last operator
+            self.expression    = self.expression[:-1] + op
+            self.current_input = ""
+            return
+        self.expression   += op
+        self.current_input = ""
+
+    def _push_postfix_op(self, op):
+        """Operator that attaches to what's already typed, e.g. ^2."""
+        if self.expression:
+            self.expression   += op
             self.current_input = ""
 
-    def add_function(self, func):
-        self.expression += func
+    def _push_func(self, func):
+        """
+        Push a function token.
+        If the last char is a digit / ) / constant we insert × first so that
+        '5e^(2)' becomes '5*e^(2)' and not '5e^(2)' which Python can't parse.
+        """
+        if self._needs_implicit_multiply():
+            self.expression += "×"
+        self.expression   += func
         self.current_input = ""
+        self.open_parens  += 1
 
-    def delete_last(self):
-        if self.expression:
-            # Check if we need to remove a function name
-            functions = ["sin(", "cos(", "tan(", "log10(", "log(", "sqrt(", "asin(", "acos(", "atan(", "sinh(", "cosh(", "tanh("]
-            for func in functions:
-                if self.expression.endswith(func):
-                    self.expression = self.expression[:-len(func)]
-                    self.current_input = ""
-                    return
-            self.expression = self.expression[:-1]
-            # Try to reconstruct current_input
-            if self.expression:
-                parts = self.expression.replace("+", " ").replace("-", " ").replace("*", " ").replace("/", " ").replace("**", " ").split()
-                if parts:
-                    self.current_input = parts[-1]
-                else:
-                    self.current_input = ""
-            else:
-                self.current_input = ""
+    def _push_postfix(self, op):
+        if self.current_input:
+            self.expression   += op
+            self.current_input = ""
 
-    def clear_all(self):
-        self.expression = ""
+    def _push_open_paren(self):
+        if self._needs_implicit_multiply():
+            self.expression += "×"
+        self.expression   += "("
         self.current_input = ""
+        self.open_parens  += 1
 
-    def calculate(self):
+    def _push_close_paren(self):
+        if self.open_parens > 0:
+            self.expression   += ")"
+            self.current_input = ""
+            self.open_parens  -= 1
+
+    def _push_constant(self, val):
+        if self._needs_implicit_multiply():
+            self.expression += "×"
+        self.expression   += val
+        self.current_input = val
+
+    def _negate(self):
+        if self.current_input and not self.current_input.startswith("-"):
+            ci  = self.current_input
+            neg = "-" + ci
+            idx = self.expression.rfind(ci)
+            if idx != -1:
+                self.expression    = (self.expression[:idx]
+                                      + neg
+                                      + self.expression[idx + len(ci):])
+                self.current_input = neg
+        elif self.current_input.startswith("-"):
+            ci  = self.current_input
+            pos = ci[1:]
+            idx = self.expression.rfind(ci)
+            if idx != -1:
+                self.expression    = (self.expression[:idx]
+                                      + pos
+                                      + self.expression[idx + len(ci):])
+                self.current_input = pos
+        else:
+            self.expression   += "-"
+            self.current_input = ""
+
+    def _delete_last(self):
         if not self.expression:
             return
+        multi_tokens = [
+            "asin(", "acos(", "atan(",
+            "sinh(", "cosh(", "tanh(",
+            "sin(", "cos(", "tan(",
+            "log(", "ln(",
+            "√(", "e^(", "10^(",
+            "abs(", "eng(",
+            "^2", "00", "π",
+            "×(",                           # implicit-multiply prefix
+        ]
+        for tok in multi_tokens:
+            if self.expression.endswith(tok):
+                self.expression    = self.expression[:-len(tok)]
+                self.current_input = self._extract_last_number()
+                if "(" in tok:
+                    self.open_parens = max(0, self.open_parens - 1)
+                return
+        self.expression    = self.expression[:-1]
+        self.current_input = self._extract_last_number()
 
+    def _extract_last_number(self):
+        buf = ""
+        for ch in reversed(self.expression):
+            if ch in "0123456789.":
+                buf = ch + buf
+            else:
+                break
+        return buf
+
+    def _clear_all(self):
+        self.expression       = ""
+        self.current_input    = ""
+        self.open_parens      = 0
+        self._just_calculated = False
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Memory
+    # ─────────────────────────────────────────────────────────────────────────
+    def _current_value(self):
+        if self.current_input:
+            try:
+                s = self.current_input.replace("π", str(math.pi))
+                return float(s)
+            except Exception:
+                pass
+        return float(self.last_result)
+
+    def _mem_clear(self):
+        self.memory = 0.0
+        self.mem_lbl.config(text="")
+
+    def _mem_store(self):
         try:
-            # Prepare expression for evaluation
-            expr = self.expression
+            self.memory = self._current_value()
+            self.mem_lbl.config(text=f"M = {self._fmt(self.memory)}")
+        except Exception:
+            pass
 
-            # Replace display operators with Python operators
-            expr = expr.replace("×", "*").replace("÷", "/")
+    def _mem_recall(self):
+        self._push_constant(self._fmt(self.memory))
 
-            # Handle factorial
-            if "!" in expr:
-                parts = expr.split("!")
-                new_parts = []
-                for i, part in enumerate(parts[:-1]):
-                    if part:
-                        # Get the number before !
-                        num = eval(part)
-                        new_parts.append(str(self.factorial(int(num))))
-                new_parts.append(parts[-1])
-                expr = "".join(new_parts)
+    def _mem_add(self):
+        try:
+            self.memory += self._current_value()
+            self.mem_lbl.config(text=f"M = {self._fmt(self.memory)}")
+        except Exception:
+            pass
 
-            # Handle trigonometric functions (convert to radians if needed)
-            # Since we'll evaluate in degrees, we need to convert
-            trig_funcs = ["sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh"]
+    def _mem_sub(self):
+        try:
+            self.memory -= self._current_value()
+            self.mem_lbl.config(text=f"M = {self._fmt(self.memory)}")
+        except Exception:
+            pass
 
-            # Add math. prefix and convert degrees to radians for trig functions
-            for func in trig_funcs:
-                if func + "(" in expr:
-                    if func in ["asin", "acos", "atan"]:
-                        # Inverse trig: result is in radians, convert to degrees
-                        expr = expr.replace(func + "(", f"math.degrees(math.{func}(") + ")"
-                    else:
-                        # Forward trig: input is in degrees, convert to radians
-                        expr = expr.replace(func + "(", f"math.{func}(math.radians(") + ")"
+    # ─────────────────────────────────────────────────────────────────────────
+    # Evaluator
+    # ─────────────────────────────────────────────────────────────────────────
+    def _calculate(self):
+        if not self.expression:
+            return
+        try:
+            result = self._evaluate(self.expression)
+            self.last_result      = result
+            self.expression       = self._fmt(result)
+            self.current_input    = self._fmt(result)
+            self.open_parens      = 0
+            self._just_calculated = True
+        except Exception as err:
+            print(f"[Calc error] {err!r}  expr={self.expression!r}")
+            self.display.config(text="Error", fg="#ef5350")
+            self.expr_label.config(text=self.expression)
+            self.expression       = ""
+            self.current_input    = ""
+            self.open_parens      = 0
 
-            # Handle sqrt
-            expr = expr.replace("sqrt(", "math.sqrt(")
+    def _evaluate(self, raw: str) -> float:
+        """
+        Safely convert the display expression to Python and evaluate it.
 
-            # Handle log10
-            expr = expr.replace("log10(", "math.log10(")
+        Strategy
+        --------
+        1.  Replace display symbols (×, ÷, π …) with unique placeholders so
+            subsequent substitutions can never corrupt them.
+        2.  Expand factorials via regex.
+        3.  Restore placeholders to valid Python.
+        4.  eval() inside a restricted namespace.
+        """
+        e = raw
 
-            # Evaluate
-            result = eval(expr)
+        # ── 1a. Implicit multiply: digit/)/π immediately before ( or π ───
+        #   Already inserted at input time via _needs_implicit_multiply(),
+        #   but run a final safety pass here as well.
+        e = re.sub(r'(\d|[)π])([(πe])', r'\1×\2', e)
 
-            # Round to avoid floating point errors
-            if isinstance(result, float):
-                result = round(result, 10)
-                if result == int(result):
-                    result = int(result)
+        # ── 1b. Display operators ─────────────────────────────────────────
+        # Tag every token with a unique placeholder so nothing gets
+        # double-substituted later.
+        PLACEHOLDERS = [
+            # functions  (longest first to avoid partial matches)
+            ("asin(",  "§ASIN§"),
+            ("acos(",  "§ACOS§"),
+            ("atan(",  "§ATAN§"),
+            ("sinh(",  "§SINH§"),
+            ("cosh(",  "§COSH§"),
+            ("tanh(",  "§TANH§"),
+            ("sin(",   "§SIN§"),
+            ("cos(",   "§COS§"),
+            ("tan(",   "§TAN§"),
+            ("log(",   "§LOG§"),
+            ("ln(",    "§LN§"),
+            ("√(",     "§SQRT§"),
+            ("abs(",   "§ABS§"),
+            ("eng(",   "§ENG§"),
+            # special power functions — MUST come before generic ^ handler
+            ("e^(",    "§EXP§"),
+            ("10^(",   "§TEN§"),
+            # constants
+            ("π",      "§PI§"),
+        ]
+        for tok, ph in PLACEHOLDERS:
+            e = e.replace(tok, ph)
 
-            self.last_result = result
-            self.expression = str(result)
-            self.current_input = str(result)
+        # ── 1c. Remaining display operators ──────────────────────────────
+        e = e.replace("×", "*").replace("÷", "/")
 
-        except Exception as e:
-            self.expression = "Error"
-            self.current_input = ""
-            self.last_result = 0
+        # ── 2. ^2 shortcut, then generic ^ ───────────────────────────────
+        e = re.sub(r'\^2(?!\d)', '**2', e)
+        e = e.replace("^", "**")
 
-    def factorial(self, n):
-        if n < 0:
-            return float('nan')
-        if n == 0 or n == 1:
-            return 1
-        result = 1
-        for i in range(2, n + 1):
-            result *= i
+        # ── 3. Restore placeholders → Python calls ────────────────────────
+        E  = math.e
+        PI = math.pi
+        RESTORE = [
+            ("§SQRT§", "_sqrt("),
+            ("§SIN§",  "_dsin("),
+            ("§COS§",  "_dcos("),
+            ("§TAN§",  "_dtan("),
+            ("§ASIN§", "_dasin("),
+            ("§ACOS§", "_dacos("),
+            ("§ATAN§", "_datan("),
+            ("§SINH§", "_sinh("),
+            ("§COSH§", "_cosh("),
+            ("§TANH§", "_tanh("),
+            ("§LOG§",  "_log10("),
+            ("§LN§",   "_ln("),
+            ("§ABS§",  "_abs("),
+            ("§ENG§",  "("),               # eng(x) = x
+            # e^( x ) → math.e ** x
+            # The placeholder becomes  §EXP§ x )
+            # We restore it as  _exp(  so _exp(x) = e**x
+            ("§EXP§",  "_exp("),
+            ("§TEN§",  "_ten("),           # 10^(x) = 10**x
+            ("§PI§",   f"({PI})"),
+        ]
+        for ph, py in RESTORE:
+            e = e.replace(ph, py)
+
+        # ── 4. Factorial  n! ──────────────────────────────────────────────
+        e = self._expand_factorials(e)
+
+        # ── 5. percentage  x% → (x/100) ──────────────────────────────────
+        e = re.sub(r'(\d+(?:\.\d*)?)\s*%', r'(\1/100)', e)
+
+        # ── 6. Auto-close parentheses ─────────────────────────────────────
+        opens  = e.count("(")
+        closes = e.count(")")
+        if opens > closes:
+            e += ")" * (opens - closes)
+
+        # ── 7. Safe eval ──────────────────────────────────────────────────
+        safe_ns = {
+            "__builtins__": {},
+            "_sqrt":  math.sqrt,
+            "_dsin":  lambda x: math.sin(math.radians(x)),
+            "_dcos":  lambda x: math.cos(math.radians(x)),
+            "_dtan":  lambda x: math.tan(math.radians(x)),
+            "_dasin": lambda x: math.degrees(math.asin(x)),
+            "_dacos": lambda x: math.degrees(math.acos(x)),
+            "_datan": lambda x: math.degrees(math.atan(x)),
+            "_sinh":  math.sinh,
+            "_cosh":  math.cosh,
+            "_tanh":  math.tanh,
+            "_log10": math.log10,
+            "_ln":    math.log,
+            "_abs":   abs,
+            # e^(x) and 10^(x) are now proper function calls
+            "_exp":   lambda x: math.e ** x,
+            "_ten":   lambda x: 10.0 ** x,
+        }
+
+        print(f"[eval] {e!r}")            # helpful for debugging
+        result = eval(e, safe_ns)         # noqa: S307
+
+        if isinstance(result, float):
+            result = round(result, 10)
+            if abs(result - round(result)) < 1e-9:
+                result = int(round(result))
         return result
 
-    def update_display(self):
-        # Update expression label
-        display_expr = self.expression
-        display_expr = display_expr.replace("**", "^")
-        display_expr = display_expr.replace("*", "×")
-        display_expr = display_expr.replace("/", "÷")
+    # ── Factorial ─────────────────────────────────────────────────────────────
+    def _expand_factorials(self, e: str) -> str:
+        pattern = re.compile(r'(\d+)!')
+        guard   = 0
+        while '!' in e and guard < 30:
+            m = pattern.search(e)
+            if m:
+                n   = int(m.group(1))
+                val = self._factorial(n)
+                e   = e[:m.start()] + str(val) + e[m.end():]
+            else:
+                e = e.replace('!', '', 1)
+            guard += 1
+        return e
 
-        self.expr_label.config(text=display_expr)
+    def _factorial(self, n: int) -> int:
+        if n < 0:
+            raise ValueError("factorial of negative number")
+        r = 1
+        for i in range(2, n + 1):
+            r *= i
+        return r
 
-        # Update main display
-        display_text = self.current_input if self.current_input else "0"
-        if display_text == "Error":
-            self.display.config(text="Error")
-        else:
-            # Format the number nicely
-            try:
-                if display_text and display_text != "Error":
-                    num = float(display_text)
-                    if num == int(num):
-                        display_text = str(int(num))
-            except:
-                pass
-            self.display.config(text=display_text)
+    # ─────────────────────────────────────────────────────────────────────────
+    # Display
+    # ─────────────────────────────────────────────────────────────────────────
+    def _fmt(self, value) -> str:
+        try:
+            f = float(value)
+            if f == int(f) and abs(f) < 1e15:
+                return str(int(f))
+            return f"{f:.10g}"
+        except Exception:
+            return str(value)
 
+    def _update_display(self):
+        # Show the user-facing expression unchanged (it already uses × ÷ etc.)
+        self.expr_label.config(text=self.expression)
+
+        text = self.current_input if self.current_input else "0"
+        if self.expression == "Error":
+            self.display.config(text="Error", fg="#ef5350")
+            return
+        try:
+            f    = float(text.replace("π", str(math.pi)))
+            text = self._fmt(f)
+        except Exception:
+            pass
+        self.display.config(text=text, fg=COLORS["display_text"])
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 def main():
     root = tk.Tk()
-    app = ScientificCalculator(root)
+    try:
+        from ctypes import windll
+        windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+    ScientificCalculator(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
