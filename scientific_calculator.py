@@ -4,7 +4,7 @@ import math
 import re
 from functools import partial
 
-# ── Button layout ─────────────────────────────────────────────────────────────
+# Button layout
 BUTTON_ROWS = [
     [("⏮","nav"),  ("◀","nav"),  ("▲","nav"),  ("▼","nav"),  ("▶","nav"),  ("⏭","nav")],
     [("hyp","fn"), ("And","fn"), ("Or","fn"),  ("int","fn"), ("Mode","fn"),("π","fn")],
@@ -40,7 +40,7 @@ NUM_COLS = 6
 class ScientificCalculator:
     def __init__(self, root):
         self.root = root
-        self.root.title("CalcureX fx-120")
+        self.root.title("Einsteincalx")
         self.root.configure(bg=COLORS["bg"])
 
         sw = root.winfo_screenwidth()
@@ -53,7 +53,7 @@ class ScientificCalculator:
         self.root.minsize(320, 580)
         self.root.resizable(True, True)
 
-        # ── State ─────────────────────────────────────────────────────────
+        # State 
         self.expression       = ""
         self.current_input    = ""
         self.memory           = 0.0
@@ -62,7 +62,7 @@ class ScientificCalculator:
         self._cursor_vis      = True
         self._just_calculated = False
 
-        # ── Fonts ─────────────────────────────────────────────────────────
+        # Fonts 
         self._font_display = tkfont.Font(family="Helvetica Neue", size=42, weight="bold")
         self._font_expr    = tkfont.Font(family="Helvetica Neue", size=11)
         self._font_cursor  = tkfont.Font(family="Helvetica Neue", size=11)
@@ -76,9 +76,7 @@ class ScientificCalculator:
         self.root.bind("<Configure>", self._on_resize)
         self.root.after(80, lambda: self._on_resize(None))
 
-    # ─────────────────────────────────────────────────────────────────────────
     # UI
-    # ─────────────────────────────────────────────────────────────────────────
     def _build_ui(self):
         self.outer = tk.Frame(self.root, bg=COLORS["bg"])
         self.outer.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -164,7 +162,7 @@ class ScientificCalculator:
                     lambda e, b=btn, col=bg: b.config(bg=col))
                 self._btn_widgets.append((btn, ctype, bg))
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
+    # Helpers 
     def _font_for(self, ctype):
         if ctype == "nav":                       return self._font_nav
         if ctype in ("num", "eq", "del", "ac"): return self._font_num
@@ -179,7 +177,7 @@ class ScientificCalculator:
         new = tuple(min(255, int(c + (255 - c) * pct)) for c in rgb)
         return '#{:02x}{:02x}{:02x}'.format(*new)
 
-    # ── Resize ────────────────────────────────────────────────────────────────
+    #  Resize
     def _on_resize(self, _):
         self.root.update_idletasks()
         w = self.root.winfo_width()
@@ -207,9 +205,8 @@ class ScientificCalculator:
         self.cursor_label.config(text="|" if self._cursor_vis else " ")
         self.root.after(530, self._blink_cursor)
 
-    # ─────────────────────────────────────────────────────────────────────────
+
     # Button handler
-    # ─────────────────────────────────────────────────────────────────────────
     def on_button_click(self, label):
         is_digit = (label in [str(i) for i in range(10)] + [".", "00"])
         if self._just_calculated and is_digit:
@@ -265,9 +262,7 @@ class ScientificCalculator:
 
         self._update_display()
 
-    # ─────────────────────────────────────────────────────────────────────────
     # Input primitives
-    # ─────────────────────────────────────────────────────────────────────────
     def _needs_implicit_multiply(self):
         """
         Returns True when the expression ends with something that would need
@@ -423,10 +418,7 @@ class ScientificCalculator:
         self.current_input    = ""
         self.open_parens      = 0
         self._just_calculated = False
-
-    # ─────────────────────────────────────────────────────────────────────────
     # Memory
-    # ─────────────────────────────────────────────────────────────────────────
     def _current_value(self):
         if self.current_input:
             try:
@@ -464,9 +456,7 @@ class ScientificCalculator:
         except Exception:
             pass
 
-    # ─────────────────────────────────────────────────────────────────────────
     # Evaluator
-    # ─────────────────────────────────────────────────────────────────────────
     def _calculate(self):
         if not self.expression:
             return
@@ -504,7 +494,7 @@ class ScientificCalculator:
         #   but run a final safety pass here as well.
         e = re.sub(r'(\d|[)π])([(πe])', r'\1×\2', e)
 
-        # ── 1b. Display operators ─────────────────────────────────────────
+        # Display operators 
         # Tag every token with a unique placeholder so nothing gets
         # double-substituted later.
         PLACEHOLDERS = [
@@ -532,14 +522,14 @@ class ScientificCalculator:
         for tok, ph in PLACEHOLDERS:
             e = e.replace(tok, ph)
 
-        # ── 1c. Remaining display operators ──────────────────────────────
+        # ── 1c. Remaining display operators 
         e = e.replace("×", "*").replace("÷", "/")
 
-        # ── 2. ^2 shortcut, then generic ^ ───────────────────────────────
+        # ── 2. ^2 shortcut, then generic ^ 
         e = re.sub(r'\^2(?!\d)', '**2', e)
         e = e.replace("^", "**")
 
-        # ── 3. Restore placeholders → Python calls ────────────────────────
+        # ── 3. Restore placeholders → Python calls 
         E  = math.e
         PI = math.pi
         RESTORE = [
@@ -567,19 +557,19 @@ class ScientificCalculator:
         for ph, py in RESTORE:
             e = e.replace(ph, py)
 
-        # ── 4. Factorial  n! ──────────────────────────────────────────────
+        # ── 4. Factorial  n! 
         e = self._expand_factorials(e)
 
-        # ── 5. percentage  x% → (x/100) ──────────────────────────────────
+        # ── 5. percentage  x% → (x/100) 
         e = re.sub(r'(\d+(?:\.\d*)?)\s*%', r'(\1/100)', e)
 
-        # ── 6. Auto-close parentheses ─────────────────────────────────────
+        # ── 6. Auto-close parentheses 
         opens  = e.count("(")
         closes = e.count(")")
         if opens > closes:
             e += ")" * (opens - closes)
 
-        # ── 7. Safe eval ──────────────────────────────────────────────────
+        # ── 7. Safe eval 
         safe_ns = {
             "__builtins__": {},
             "_sqrt":  math.sqrt,
@@ -609,7 +599,7 @@ class ScientificCalculator:
                 result = int(round(result))
         return result
 
-    # ── Factorial ─────────────────────────────────────────────────────────────
+    # ── Factorial 
     def _expand_factorials(self, e: str) -> str:
         pattern = re.compile(r'(\d+)!')
         guard   = 0
@@ -632,9 +622,7 @@ class ScientificCalculator:
             r *= i
         return r
 
-    # ─────────────────────────────────────────────────────────────────────────
     # Display
-    # ─────────────────────────────────────────────────────────────────────────
     def _fmt(self, value) -> str:
         try:
             f = float(value)
@@ -660,7 +648,7 @@ class ScientificCalculator:
         self.display.config(text=text, fg=COLORS["display_text"])
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Entry point 
 def main():
     root = tk.Tk()
     try:
